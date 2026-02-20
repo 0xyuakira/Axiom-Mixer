@@ -3,8 +3,9 @@ pragma solidity ^0.8.30;
 
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 import {IVerifier} from "./Verifier.sol";
+import {ReentrancyGuardTransient} from "openzeppelin-contracts/contracts/utils/ReentrancyGuardTransient.sol";
 
-contract Mixer is IncrementalMerkleTree {
+contract Mixer is IncrementalMerkleTree, ReentrancyGuardTransient {
     uint256 public constant DENOMINATION = 0.001 ether;
 
     IVerifier public immutable VERIFIER;
@@ -42,8 +43,11 @@ contract Mixer is IncrementalMerkleTree {
     }
 
     /// @notice Withdraw funds from mixer
-    function withdraw(bytes memory _proof, bytes32 _rootHash, bytes32 _nullifierHash, address _recipient) external {
-        if (isKnownRoot(_rootHash)) {
+    function withdraw(bytes memory _proof, bytes32 _rootHash, bytes32 _nullifierHash, address _recipient)
+        external
+        nonReentrant
+    {
+        if (!isKnownRoot(_rootHash)) {
             revert UnknownRootHash(_rootHash);
         }
         if (nullifierHashs[_nullifierHash]) {
@@ -53,7 +57,7 @@ contract Mixer is IncrementalMerkleTree {
         publicInputs[0] = _rootHash;
         publicInputs[1] = _nullifierHash;
         publicInputs[2] = bytes32(uint256(uint160(_recipient)));
-        if (VERIFIER.verify(_proof, publicInputs)) {
+        if (!VERIFIER.verify(_proof, publicInputs)) {
             revert InvalidProof();
         }
         nullifierHashs[_nullifierHash] = true;
