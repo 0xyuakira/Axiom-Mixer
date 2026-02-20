@@ -1,14 +1,23 @@
-// SDPX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Poseidon2, Field} from "@poseidon/src/bn254/solidity/Poseidon2.sol";
+import {Poseidon2_BN254} from "poseidon2-evm/bn254/solidity/Poseidon2.sol";
+import {Field} from "poseidon2-evm/bn254/solidity/Field.sol";
 
 contract IncrementalMerkleTree {
-    uint32 public immutable depth;
-    bytes32 public rootHash;
+    uint32 public immutable DEPTH;
+
+    uint32 public constant ROOT_HISTORY_SIZE = 30;
+
+    Poseidon2_BN254 public immutable HASHER;
+
+    uint32 public currentRootIndex;
+
     uint32 public nextLeafIndex;
+
+    mapping(uint256 => bytes32) public roots;
+
     mapping(uint32 => bytes32) public cachedSubTree;
-    Poseidon2 public immutable hasher;
 
     error DepthShouldBeGreaterThanZero();
     error DepthShouldBeLessThan32();
@@ -24,17 +33,17 @@ contract IncrementalMerkleTree {
             revert DepthShouldBeLessThan32();
         }
 
-        depth = _depth;
+        DEPTH = _depth;
 
-        rootHash = zeros(_depth - 1);
+        roots[0] = zeros(_depth - 1);
 
-        hasher = Poseidon2(_hasher);
+        HASHER = Poseidon2_BN254(_hasher);
     }
 
     function _insert(bytes32 _leaf) internal returns (uint32) {
         uint32 _nextLeafIndex = nextLeafIndex;
 
-        if (_nextLeafIndex == uint32(2) ** depth) {
+        if (_nextLeafIndex == uint32(2) ** DEPTH) {
             revert MerkleTreeFull(_nextLeafIndex);
         }
 
@@ -42,7 +51,7 @@ contract IncrementalMerkleTree {
         bytes32 currentHash = _leaf;
         bytes32 left;
         bytes32 right;
-        for (uint32 i = 0; i < depth; i++) {
+        for (uint32 i = 0; i < DEPTH; i++) {
             if (currentIndex % 2 == 0) {
                 left = currentHash;
                 right = zeros(i);
@@ -51,12 +60,30 @@ contract IncrementalMerkleTree {
                 left = cachedSubTree[i];
                 right = currentHash;
             }
-            currentHash = Field.toBytes32(hasher.hash_2(Field.toField(left), Field.toField(right)));
+            currentHash = Field.toBytes32(HASHER.hash_2(Field.toField(left), Field.toField(right)));
             currentIndex = currentIndex / 2;
         }
-        rootHash = currentHash;
+        uint32 newRootIndex = (currentRootIndex + 1) % ROOT_HISTORY_SIZE;
+        currentRootIndex = newRootIndex;
+        roots[newRootIndex] = currentHash;
         nextLeafIndex += 1;
         return _nextLeafIndex;
+    }
+
+    function isKnownRoot(bytes32 _root) public view returns (bool) {
+        uint32 _currentRootIndex = currentRootIndex;
+        uint32 i = _currentRootIndex;
+        do {
+            if (_root == roots[i]) {
+                return true;
+            }
+
+            if (i == 0) {
+                i = ROOT_HISTORY_SIZE;
+            }
+            i--;
+        } while (i != _currentRootIndex);
+        return false;
     }
 
     function zeros(uint32 i) public pure returns (bytes32) {
